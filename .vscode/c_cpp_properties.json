@@ -1,7 +1,7 @@
 {
     "configurations": [
         {
-            "name": "STM32",
+            "name": "STM32F407-ARM-GCC",
             "includePath": [
                 "${workspaceFolder}/Inc",
                 "${workspaceFolder}/Drivers/STM32F4xx_HAL_Driver/Inc",
@@ -59,16 +59,18 @@
             ],
             "defines": [
                 "USE_HAL_DRIVER",
-                "STM32F407xx"
+                "STM32F407xx",
+                "ARM_MATH_CM4",
+                "DISABLE_LOG_SYSTEM"
             ],
-            "compilerPath": "C:/msys64/mingw64/bin/arm-none-eabi-gcc.exe",
+            "compilerPath": "D:/msys64/mingw64/bin/arm-none-eabi-gcc.exe",
             "compilerArgs": [
                 "-mcpu=cortex-m4",
                 "-mthumb",
                 "-mfpu=fpv4-sp-d16",
                 "-mfloat-abi=hard"
             ],
-            "cStandard": "c17",
+            "cStandard": "gnu11",
             "cppStandard": "gnu++14",
             "intelliSenseMode": "gcc-arm",
             "browse": {

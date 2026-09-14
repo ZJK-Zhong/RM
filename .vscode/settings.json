@@ -16,8 +16,8 @@
         "robot.h": "c"
     },
     "C_Cpp.default.configurationProvider": "",
-    "makefile.makePath": "mingw32-make",
-    "cortex-debug.armToolchainPath": "C:\\msys64\\mingw64\\bin",
-    "cortex-debug.openocdPath": "C:\\msys64\\mingw64\\bin\\openocd.exe",
-    "cortex-debug.JLinkGDBServerPath": "E:\\APP\\vscode\\jlink\\JLinkGDBServerCL.exe"
+    "makefile.makePath": "D:\\msys64\\mingw64\\bin\\mingw32-make.exe",
+    "cortex-debug.armToolchainPath": "D:\\msys64\\mingw64\\bin",
+    "cortex-debug.openocdPath": "D:\\msys64\\mingw64\\bin\\openocd.exe",
+    "cortex-debug.JLinkGDBServerPath": "C:\\Program Files\\SEGGER\\JLink\\JLinkGDBServerCL.exe"
 }

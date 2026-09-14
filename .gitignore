@@ -57,3 +57,6 @@ dkms.conf
 # debug information files
 *.dwo
 >>>>>>> 2c8c7865d934d2777d032e0dd1842eab47d909cb
+
+# Local beginner tutorial
+/.Doc/哨兵新手逐行调车教程.md
