@@ -680,7 +680,7 @@ static void RunSpinMode(void)
     gimbal_cmd_send.gimbal_mode = GIMBAL_GYRO_MODE;
     chassis_cmd_send.chassis_mode = CHASSIS_ROTATE;
     shoot_cmd_send.shoot_mode = SHOOT_OFF;
-    chassis_cmd_send.chassis_spin_speed = 14.0f;
+    chassis_cmd_send.chassis_spin_speed = 14.0f / 3.0f;
     chassis_cmd_send.mode = 2;
     UpdateRCInput();
 }

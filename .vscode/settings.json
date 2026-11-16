@@ -18,6 +18,17 @@
     "C_Cpp.default.configurationProvider": "",
     "makefile.makePath": "D:\\msys64\\mingw64\\bin\\mingw32-make.exe",
     "cortex-debug.armToolchainPath": "D:\\msys64\\mingw64\\bin",
+    "cortex-debug.gdbPath": "D:\\msys64\\mingw64\\bin\\gdb-multiarch.exe",
     "cortex-debug.openocdPath": "D:\\msys64\\mingw64\\bin\\openocd.exe",
-    "cortex-debug.JLinkGDBServerPath": "C:\\Program Files\\SEGGER\\JLink\\JLinkGDBServerCL.exe"
+    "cortex-debug.JLinkGDBServerPath": "C:\\Program Files\\SEGGER\\JLink\\JLinkGDBServerCL.exe",
+    "emberprobe.sampleFrequencyHz": 200,
+    "memory-view.trackDebuggers": [
+        "ozone",
+        "orbit"
+    ],
+    "mcu-debug.rtos-views.trackDebuggers": [
+        "ozone",
+        "orbit"
+    ],
+    "orbit.defaultProgram": "e:\\RM\\rm-sentry\\build\\basic_framework.elf"
 }

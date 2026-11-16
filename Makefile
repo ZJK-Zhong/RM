@@ -349,10 +349,17 @@ clean:
 #######################################
 # download directl without debugging
 #######################################
+# The SEGGER installer does not add its tools to the Windows PATH, so JFlash is
+# referenced through its install directory instead of a bare command name.
+# Override when J-Link is installed elsewhere, e.g.
+#   mingw32-make download_jlink SEGGER_DIR="D:/Tools/SEGGER/JLink"
+SEGGER_DIR ?= C:/Program Files/SEGGER/JLink
+JFLASH ?= $(SEGGER_DIR)/JFlash.exe
+
 download_dap:
-	openocd -f openocd_dap.cfg -c init -c halt -c "flash write_image erase $(BUILD_DIR)/$(TARGET).bin 0x08000000" -c reset -c shutdown
+	openocd -f openocd_dap.cfg -c "adapter speed 2000" -c "program $(BUILD_DIR)/$(TARGET).elf verify reset exit"
 download_jlink:
-	JFlash -openprj'stm32.jflash' -open'$(BUILD_DIR)/$(TARGET).hex',0x8000000 -auto -startapp -exit
+	"$(JFLASH)" -openprj"stm32.jflash" -open"$(BUILD_DIR)/$(TARGET).hex",0x8000000 -auto -startapp -exit
   
 	
 

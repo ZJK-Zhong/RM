@@ -60,3 +60,5 @@ dkms.conf
 
 # Local beginner tutorial
 /.Doc/哨兵新手逐行调车教程.md
+/.Doc/哨兵电机数据流与整车控制链教程_连贯版.md
+/.Doc/哨兵所有电机目标值与反馈值详解_重写版.md

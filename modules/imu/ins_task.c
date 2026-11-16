@@ -38,6 +38,20 @@ static float RefTemp = 40; // 恒温设定温度
 
 static void IMU_Param_Correction(IMU_Param_t *param, float gyro[3], float accel[3]);
 
+// IMU fixed to the gimbal, flipped 180 degrees about its forward (roll/X) axis.
+// Restore the original gimbal frame before initialization and every EKF update.
+static void IMU_ReadCorrectedData(float gyro[3], float accel[3])
+{
+    BMI088_Read(&BMI088);
+    gyro[X] = BMI088.Gyro[X];
+    gyro[Y] = -BMI088.Gyro[Y];
+    gyro[Z] = -BMI088.Gyro[Z];
+    accel[X] = BMI088.Accel[X];
+    accel[Y] = -BMI088.Accel[Y];
+    accel[Z] = -BMI088.Accel[Z];
+    IMU_Param_Correction(&IMU_Param, gyro, accel);
+}
+
 static void IMUPWMSet(uint16_t pwm)
 {
     __HAL_TIM_SetCompare(&htim10, TIM_CHANNEL_1, pwm);
@@ -59,21 +73,32 @@ static void InitQuaternion(float *init_q4)
     float acc_init[3] = {0};
     float gravity_norm[3] = {0, 0, 1}; // 导航系重力加速度矢量,归一化后为(0,0,1)
     float axis_rot[3] = {0};           // 旋转轴
+    float gyro[3], accel[3];
     // 读取100次加速度计数据,取平均值作为初始值
     for (uint8_t i = 0; i < 100; ++i)
     {
-        BMI088_Read(&BMI088);
-        acc_init[X] += BMI088.Accel[X];
-        acc_init[Y] += BMI088.Accel[Y];
-        acc_init[Z] += BMI088.Accel[Z];
+        IMU_ReadCorrectedData(gyro, accel);
+        acc_init[X] += accel[X];
+        acc_init[Y] += accel[Y];
+        acc_init[Z] += accel[Z];
         DWT_Delay(0.001);
     }
     for (uint8_t i = 0; i < 3; ++i)
         acc_init[i] /= 100;
     Norm3d(acc_init);
     // 计算原始加速度矢量和导航系重力加速度矢量的夹角
-    float angle = acosf(Dot3d(acc_init, gravity_norm));
+    float cos_angle = float_constrain(Dot3d(acc_init, gravity_norm), -1.0f, 1.0f);
     Cross3d(acc_init, gravity_norm, axis_rot);
+    // Parallel/antiparallel gravity has no unique cross-product axis.
+    if (NormOf3d(axis_rot) < 1e-6f)
+    {
+        init_q4[0] = cos_angle >= 0.0f ? 1.0f : 0.0f;
+        init_q4[1] = cos_angle >= 0.0f ? 0.0f : 1.0f;
+        init_q4[2] = 0.0f;
+        init_q4[3] = 0.0f;
+        return;
+    }
+    float angle = acosf(cos_angle);
     Norm3d(axis_rot);
     init_q4[0] = cosf(angle / 2.0f);
     for (uint8_t i = 0; i < 2; ++i)
@@ -131,30 +156,7 @@ void INS_Task(void)
     // ins update
     if ((count % 1) == 0)
     {
-        BMI088_Read(&BMI088);
-
-        // INS.Accel[X] =  BMI088.Accel[X];   
-        // INS.Accel[Y] =  BMI088.Accel[Y];    
-        // INS.Accel[Z] =  BMI088.Accel[Z];   
-
-        // INS.Gyro[X] =  BMI088.Gyro[X];     
-        // INS.Gyro[Y] = -BMI088.Gyro[Y];     
-        // INS.Gyro[Z] =  BMI088.Gyro[Z];
-
-        INS.Accel[X] =  BMI088.Accel[X];   
-        INS.Accel[Y] =  BMI088.Accel[Y];    
-        INS.Accel[Z] =  BMI088.Accel[Z];   
-
-        INS.Gyro[X] =  BMI088.Gyro[X];     
-        INS.Gyro[Y] =  BMI088.Gyro[Y];     
-        INS.Gyro[Z] =  BMI088.Gyro[Z];
-
-        //InitialTODO:搞清楚陀螺仪方向
-
-
-
-        // demo function,用于修正安装误差,可以不管,本demo暂时没用
-        IMU_Param_Correction(&IMU_Param, INS.Gyro, INS.Accel);
+        IMU_ReadCorrectedData(INS.Gyro, INS.Accel);
 
         // 计算重力加速度矢量和b系的XY两轴的夹角,可用作功能扩展,本demo暂时没用
         // INS.atanxz = -atan2f(INS.Accel[X], INS.Accel[Z]) * 180 / PI;
