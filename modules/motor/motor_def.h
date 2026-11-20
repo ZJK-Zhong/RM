@@ -68,6 +68,13 @@ typedef enum
     MOTOR_ENALBED = 1,
 } Motor_Working_Type_e;
 
+// GM6020 驱动器内部控制模式；不同于主控的 CURRENT_LOOP 闭环选择。
+typedef enum
+{
+    GM6020_VOLTAGE_CONTROL = 0, // 默认兼容旧固件，发送 0x1FF/0x2FF
+    GM6020_CURRENT_CONTROL,     // 新固件打开电流环后，发送 0x1FE/0x2FE
+} GM6020_Control_Mode_e;
+
 /* 电机控制设置,包括闭环类型,反转标志和反馈来源 */
 typedef struct
 {
@@ -78,6 +85,7 @@ typedef struct
     Feedback_Source_e angle_feedback_source;       // 角度反馈类型
     Feedback_Source_e speed_feedback_source;       // 速度反馈类型
     Feedfoward_Type_e feedforward_flag;            // 前馈标志
+    GM6020_Control_Mode_e gm6020_control_mode;      // 仅GM6020使用，默认电压；初始化时决定CAN分组
 
 } Motor_Control_Setting_s;
 

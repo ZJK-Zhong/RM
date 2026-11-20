@@ -42,7 +42,7 @@ void ShootInit()
                 .Kd = 0,
                 .Improve = PID_Integral_Limit,
                 .IntegralLimit = 10000,
-                .MaxOut = 50000,
+                .MaxOut = 16384.0f, // M3508/C620：±16384 对应 ±20 A，左右摩擦轮共用此限幅
             },
             .current_PID = {
                 .Kp = 0, // 0.7
@@ -68,7 +68,7 @@ void ShootInit()
     
 
     friction_config.can_init_config.can_handle=&hcan2;
-    friction_config.can_init_config.tx_id = 7; // 左摩擦轮,改txid和方向就行
+    friction_config.can_init_config.tx_id = 3; // 左摩擦轮C620实际ID需设为3，使用0x200，避开GM6020电压帧0x1FF
     friction_config.controller_setting_init_config.motor_reverse_flag = MOTOR_DIRECTION_REVERSE;
     friction_l = DJIMotorInit(&friction_config);
 
@@ -137,7 +137,17 @@ void ShootTask()
 {
     // 从cmd获取控制数据
     SubGetMessage(shoot_sub, &shoot_cmd_recv);
-    if (shoot_cmd_recv.shoot_mode == SHOOT_OFF)
+    if (shoot_cmd_recv.shoot_mode == SHOOT_ZERO_FORCE)
+    {
+        DJIMotorSetRef(friction_l, 0.0f);
+        DJIMotorSetRef(friction_r, 0.0f);
+        DJIMotorSetRef(loader, 0.0f);
+        DJIMotorStop(friction_l);
+        DJIMotorStop(friction_r);
+        DJIMotorStop(loader);
+        target = 0.0f;
+    }
+    else if (shoot_cmd_recv.shoot_mode == SHOOT_OFF)
     {
         DJIMotorEnable(friction_l);
         DJIMotorEnable(friction_r);

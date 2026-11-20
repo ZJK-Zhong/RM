@@ -8,14 +8,14 @@
  * @brief 初始化云台,会被RobotInit()调用
  * 
  */
-void GimbalInit();
+void GimbalInit(void);
 
 
-attitude_t* get_IMU_data(void);
+attitude_t *get_IMU_data(void);
 /**
  * @brief 云台任务
  * 
  */
-void GimbalTask();
+void GimbalTask(void);
 
 #endif // GIMBAL_H

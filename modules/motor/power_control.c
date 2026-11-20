@@ -5,6 +5,7 @@
 #include "super_cap.h"
 #include "math.h"
 
+#define CHASSIS_CURRENT_MAX_CMD 16384.0f                              // C620电流指令范围；不是安培或力矩
 
 
 // #define TORQUE_COEF 0.0003662109375f        // (20/16384)*(0.3), 电机转矩系数，与电流和转矩相关
@@ -19,9 +20,9 @@ static SuperCapInstance *super_cap_pr;                                  // 超�
 static uint8_t idx = 0; // register idx,是该文件的全局电机索引,在注册时使用
 /* DJI电机的实例,此处仅保存指针,内存的分配将通过电机实例初始化时通过malloc()进行 */
 static DJIMotorInstance *dji_motor_instance[DJI_MOTOR_CNT] = {NULL}; // 会在control任务中遍历该指针数组进行pid计算
-static float initial_torque[4];                                      // 电机输出轴实际转矩，单位N·m
+static float initial_torque[4];                                      // 功率限制前的电流指令原始值，不是N·m
 static float A, B, C;                                                // 测试用
-static float power_control_out[4], initial_give_power[4];            // 电机输出功率
+static float power_control_out[4], initial_give_power[4];             // 限制后的电流指令原始值、限制前的估算功率(W)
 static float chassis_max_power, chassis_power, initial_total_power = 0.0f;
 /**》
  * @brief 由于DJI电机发送以四个一组的形式进行,故对其进行特殊处理,用6个(2can*3group)can_instance专门负责发送
@@ -49,6 +50,14 @@ static CANInstance sender_assignment[6] = {
  *        flag的初始化在 MotorSenderGrouping()中进行
  */
 static uint8_t sender_enable_flag[6] = {0};
+
+static float ChassisClampCurrent(float current)
+{
+    if (!isfinite(current))
+        return 0.0f;
+    LIMIT_MIN_MAX(current, -CHASSIS_CURRENT_MAX_CMD, CHASSIS_CURRENT_MAX_CMD);
+    return current;
+}
 
 /**
  * @brief 设置底盘的最大功率限制
@@ -239,7 +248,6 @@ void PowerControl()
     // 底盘电机功率模型参数常量 (M3508 或 3508带减速箱)
 	float toque_coefficient = 1.99688994e-6f; 
 	float a = 1.23e-07;						 
-	float k1 = 2.0456e-07;	
 	float k2 = 1.453e-07;					 
 	float constant = 4.081f;
     float scaled_give_power[4] = {0};
@@ -281,6 +289,9 @@ void PowerControl()
         }
     }
 
+    if (!isfinite(chassis_max_power) || chassis_max_power < 0.0f)
+        chassis_max_power = 0.0f;
+
 
 
 
@@ -291,7 +302,19 @@ void PowerControl()
         motor_setting = &motor->motor_settings;
         motor_controller = &motor->motor_controller;
         measure = &motor->measure;
+        if (motor->stop_flag == MOTOR_STOP)
+        {
+            PIDReset(&motor_controller->angle_PID);
+            PIDReset(&motor_controller->speed_PID);
+            PIDReset(&motor_controller->current_PID);
+            initial_torque[i] = 0.0f;
+            initial_give_power[i] = 0.0f;
+            power_control_out[i] = 0.0f;
+            continue;
+        }
         pid_ref = motor_controller->pid_ref; // 保存设定值,防止motor_controller->pid_ref在计算过程中被修改
+        initial_torque[i] = 0.0f;
+        initial_give_power[i] = 0.0f;
         if (motor_setting->motor_reverse_flag == MOTOR_DIRECTION_REVERSE)
             pid_ref *= -1; // 设置反转
 
@@ -308,8 +331,14 @@ void PowerControl()
                 pid_measure = *motor_controller->other_speed_feedback_ptr;
             else // MOTOR_FEED
                 pid_measure = measure->speed_aps / 6.0f; // 电机的速度单位是度每秒,转换为rpm
+            if (!isfinite(pid_measure))
+            {
+                PIDReset(&motor_controller->speed_PID);
+                power_control_out[i] = 0.0f;
+                continue;
+            }
             // 更新pid_ref进入下一个环
-            pid_ref = PIDCalculate(&motor_controller->speed_PID, pid_measure, pid_ref);
+            pid_ref = ChassisClampCurrent(PIDCalculate(&motor_controller->speed_PID, pid_measure, pid_ref));
             initial_torque[i] = pid_ref;
             power_control_out[i] = pid_ref;
             A = a * initial_torque[i] * initial_torque[i];
@@ -318,11 +347,8 @@ void PowerControl()
             initial_give_power[i] = A + B + C + constant;
         }
 
-        if (motor_setting->feedback_reverse_flag == FEEDBACK_DIRECTION_REVERSE)
-            pid_ref *= -1;
-
-        // 获取最终输出
-        power_control_out[i] = pid_ref;
+        // 保持与PID一致的符号；反馈方向反转统一在CAN打包前执行一次。
+        power_control_out[i] = ChassisClampCurrent(pid_ref);
     }
     for (uint8_t i = 0; i < idx; i++)
     {
@@ -343,35 +369,43 @@ void PowerControl()
         
         for (uint8_t i = 0; i < idx; ++i)
         {
-            if (initial_give_power[i] < 0) 
-                continue; // 发电状态不缩放
+            motor = dji_motor_instance[i];
+            if (motor->stop_flag == MOTOR_STOP || initial_give_power[i] < 0)
+                continue; // 停止和发电状态不缩放
+
+            if (initial_torque[i] == 0.0f)
+                continue;                                           // 零电流需求不能因功率反解而产生制动电流
             
             scaled_give_power[i] = initial_give_power[i] * power_scale; 
             
-            motor = dji_motor_instance[i];
             float speed_rpm = motor->measure.speed_aps / 6.0f;
 
             // 解二次方程以逆推缩放后应给出的 PID out
             float b_coef = toque_coefficient * speed_rpm;
-            // 【修复 1】：将这里的 k1 修改为 k2，以匹配前面的正向拟合方程
-            float c_coef = k1 * speed_rpm * speed_rpm - scaled_give_power[i] + constant;
+            float c_coef = k2 * speed_rpm * speed_rpm - scaled_give_power[i] + constant;
             
-            // 【修复 2】：增加 delta 计算与防负数保护，防止 sqrtf(负数) = NaN 导致底盘失控
+            // 分配功率低于模型可达到的最小值时，不强行用抛物线顶点生成电流。
             float delta = b_coef * b_coef - 4.0f * a * c_coef;
-            if (delta < 0.0f) {
-                delta = 0.0f;
+            if (!isfinite(delta) || delta < 0.0f)
+            {
+                power_control_out[i] = 0.0f;
+                continue;
             }
 
-            if (initial_torque[i] > 0) 
-            {
-                float temp = (-b_coef + sqrtf(delta)) / (2.0f * a);
-                power_control_out[i] = (temp > 16000.0f) ? 16000.0f : temp;
-            }
+            // 制动时两个根可能同号，不能仅按原电流正负选根；取最接近原需求的根。
+            float root_positive = (-b_coef + sqrtf(delta)) / (2.0f * a);
+            float root_negative = (-b_coef - sqrtf(delta)) / (2.0f * a);
+            float temp = fabsf(root_positive - initial_torque[i]) <= fabsf(root_negative - initial_torque[i])
+                             ? root_positive : root_negative;
+            temp = ChassisClampCurrent(temp);
+
+            // 功率限制只允许减小指令幅值，不能放大电流或额外反向驱动。
+            // 若模型要求增大制动电流才能达到分配功率，保留原制动需求；这不是硬件功率保证。
+            if (initial_torque[i] > 0.0f)
+                LIMIT_MIN_MAX(temp, 0.0f, initial_torque[i]);
             else
-            {
-                float temp = (-b_coef - sqrtf(delta)) / (2.0f * a);
-                power_control_out[i] = (temp < -16000.0f) ? -16000.0f : temp;
-            }
+                LIMIT_MIN_MAX(temp, initial_torque[i], 0.0f);
+            power_control_out[i] = temp;
         }
     }
 
@@ -384,21 +418,20 @@ void PowerControl()
     for (uint8_t i = 0; i < idx; i++)
     {
         motor = dji_motor_instance[i];
-        set = (int16_t)power_control_out[i];
+        power_control_out[i] = ChassisClampCurrent(power_control_out[i]);
+        set = (int16_t)power_control_out[i];                          // 浮点值先检查和双向限幅，再转换为整数
 
         if (motor->motor_settings.feedback_reverse_flag == FEEDBACK_DIRECTION_REVERSE)
         {
-            // Note: 视原来的逻辑而定，是否再次翻转需要结合你的原业务逻辑确认。
-            // 原代码在循环最后做了 pid_ref *= -1，如果需要，这里也对最终限制输出做相应的修改。
-            set *= -1;
+            set *= -1;                                              // 缩放与不缩放均只执行一次方向反转
 
         }
 
 
         group = motor->sender_group;
         num = motor->message_num;
-        sender_assignment[group].tx_buff[2 * num] = (uint8_t)(set >> 8);         // 低八位
-        sender_assignment[group].tx_buff[2 * num + 1] = (uint8_t)(set & 0x00ff); // 高八位
+        sender_assignment[group].tx_buff[2 * num] = (uint8_t)(set >> 8);         // 高八位
+        sender_assignment[group].tx_buff[2 * num + 1] = (uint8_t)(set & 0x00ff); // 低八位
 
         // 若该电机处于停止状态,直接将buff置零
         if (motor->stop_flag == MOTOR_STOP)

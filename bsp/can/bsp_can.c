@@ -11,6 +11,44 @@
 static CANInstance *can_instance[CAN_MX_REGISTER_CNT] = {NULL};
 static uint8_t idx; // 全局CAN实例索引,每次有新的模块注册会自增
 
+volatile CAN1_Debug_s can1_debug = {0};
+
+/* HAL_CAN_IRQHandler会清除LEC，因此必须在接收和SCE中断入口先保存现场。
+ * 三个CAN1中断使用相同抢占优先级；本函数不打印、不等待、不复位外设。
+ * 多次线上错误可能合并为一次中断事件，计数只表示实际捕捉到的事件。
+ */
+void CAN1RecordError(void)
+{
+    static uint32_t was_bus_off;
+    uint32_t esr = hcan1.Instance->ESR;
+    uint32_t tec_low8 = (esr >> CAN_ESR_TEC_Pos) & 0xffU;
+    uint32_t rec = (esr >> CAN_ESR_REC_Pos) & 0xffU;
+    uint32_t bus_off = (esr & CAN_ESR_BOFF) != 0U;
+
+    can1_debug.irq_count++;
+    if (tec_low8 > can1_debug.max_tec_low8)
+        can1_debug.max_tec_low8 = tec_low8;
+    if (rec > can1_debug.max_rec)
+        can1_debug.max_rec = rec;
+    if (bus_off && !was_bus_off)
+        can1_debug.bus_off_count++;
+    was_bus_off = bus_off;
+
+    if ((hcan1.Instance->MSR & CAN_MSR_ERRI) == 0U)
+        return;                              // 普通接收不覆盖已保存的错误现场
+
+    can1_debug.last_esr = esr;
+    can1_debug.last_tsr = hcan1.Instance->TSR;
+    can1_debug.last_error_ms = HAL_GetTick();
+    uint32_t lec = (esr & CAN_ESR_LEC) >> CAN_ESR_LEC_Pos;
+    if (lec >= 1U && lec <= 6U)
+    {
+        can1_debug.last_lec = lec;
+        can1_debug.lec_count[lec]++;
+    }
+    can1_debug.error_event_count++;           // 放在现场保存之后，方便观察是否来了新事件
+}
+
 /* ----------------two static function called by CANRegister()-------------------- */
 
 /**
@@ -53,6 +91,9 @@ static void CANServiceInit()
     HAL_CAN_Start(&hcan1);
     HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
     HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO1_MSG_PENDING);
+    can1_debug.enabled = HAL_CAN_ActivateNotification(
+        &hcan1, CAN_IT_ERROR | CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR_WARNING |
+                    CAN_IT_ERROR_PASSIVE | CAN_IT_BUSOFF) == HAL_OK;
     HAL_CAN_Start(&hcan2);
     HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO0_MSG_PENDING);
     HAL_CAN_ActivateNotification(&hcan2, CAN_IT_RX_FIFO1_MSG_PENDING);

@@ -92,6 +92,7 @@ typedef struct
 
     uint32_t DWT_CNT;
     float dt;
+    uint8_t reset_pending; // 首次/复位后计算只输出P项，重新建立时间和误差历史
 
     PID_ErrorHandler_t ERRORHandler;
 } PIDInstance;
@@ -122,6 +123,11 @@ typedef struct // config parameter
  * @param config PID初始化配置
  */
 void PIDInit(PIDInstance *pid, PID_Init_Config_s *config);
+
+/**
+ * @brief 清空PID运行状态并重置计时，保留增益、限幅及优化配置
+ */
+void PIDReset(PIDInstance *pid);
 
 /**
  * @brief 计算PID输出

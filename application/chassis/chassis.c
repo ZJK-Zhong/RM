@@ -96,7 +96,7 @@ void ChassisInit()
                 .Ki = 0,   // 0
                 .Kd = 0,   // 0
                 .IntegralLimit = 3000,
-                .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+                .Improve = PID_Integral_Limit | PID_Derivative_On_Measurement,
                 .MaxOut = 15000,
                 .Output_LPF_RC = 0.3,
             },
@@ -137,7 +137,7 @@ void ChassisInit()
         .Ki = 0,
         .Kd = 0,
         .IntegralLimit = 1000,
-        .Improve = PID_Trapezoid_Intergral | PID_Integral_Limit | PID_Derivative_On_Measurement,
+        .Improve = PID_Integral_Limit | PID_Derivative_On_Measurement,
         .MaxOut = 1000,
     };
     PIDInit(&buffer_PID, &Buffer_pid_conf); // 缓冲能量PID初始化

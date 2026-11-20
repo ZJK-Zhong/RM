@@ -25,13 +25,6 @@ static float normalize_rad_yaw(float deg)
 }
 
 
-// 梯形积分
-static void f_Trapezoid_Intergral(PIDInstance *pid)
-{
-    // 计算梯形的面积,(上底+下底)*高/2
-    pid->ITerm = pid->Ki * ((pid->Err + pid->Last_Err) / 2) * pid->dt;
-}
-
 // 变速积分(误差小时积分作用更强)
 static void f_Changing_Integration_Rate(PIDInstance *pid)
 {
@@ -49,27 +42,27 @@ static void f_Changing_Integration_Rate(PIDInstance *pid)
 
 static void f_Integral_Limit(PIDInstance *pid)
 {
-    static float temp_Output, temp_Iout;
-    temp_Iout = pid->Iout + pid->ITerm;
-    temp_Output = pid->Pout + pid->Iout + pid->Dout;
-    if (abs(temp_Output) > pid->MaxOut)
-    {
-        if (pid->Err * pid->Iout > 0) // 积分却还在累积
-        {
-            pid->ITerm = 0; // 当前积分项置零
-        }
-    }
+    float integral_limit = fabsf(pid->IntegralLimit);
+    // 兼容运行时下调积分限幅：先约束旧积分，再计算本周期允许的增量。
+    if (pid->Iout > integral_limit)
+        pid->Iout = integral_limit;
+    else if (pid->Iout < -integral_limit)
+        pid->Iout = -integral_limit;
 
-    if (temp_Iout > pid->IntegralLimit)
-    {
-        pid->ITerm = 0;
-        pid->Iout = pid->IntegralLimit;
-    }
-    if (temp_Iout < -pid->IntegralLimit)
-    {
-        pid->ITerm = 0;
-        pid->Iout = -pid->IntegralLimit;
-    }
+    float candidate_iout = pid->Iout + pid->ITerm;
+    if (candidate_iout > integral_limit)
+        candidate_iout = integral_limit;
+    else if (candidate_iout < -integral_limit)
+        candidate_iout = -integral_limit;
+
+    float integral_step = candidate_iout - pid->Iout;
+    float candidate_output = pid->Pout + candidate_iout + pid->Dout;
+    // 只拒绝使输出继续向饱和方向增长的积分，允许反向积分帮助退出饱和。
+    if ((candidate_output > pid->MaxOut && integral_step > 0.0f) ||
+        (candidate_output < -pid->MaxOut && integral_step < 0.0f))
+        pid->ITerm = 0.0f;
+    else
+        pid->ITerm = integral_step;
 }
 
 // 微分先行(仅使用反馈值而不计参考输入的微分)
@@ -146,6 +139,28 @@ void PIDInit(PIDInstance *pid, PID_Init_Config_s *config)
     // utilize the quality of struct that its memeory is continuous
     memcpy(pid, config, sizeof(PID_Init_Config_s));
     // set rest of memory to 0
+    PIDReset(pid);
+}
+
+void PIDReset(PIDInstance *pid)
+{
+    pid->Measure = 0.0f;
+    pid->Last_Measure = 0.0f;
+    pid->Err = 0.0f;
+    pid->Last_Err = 0.0f;
+    pid->Last_ITerm = 0.0f;
+    pid->Pout = 0.0f;
+    pid->Iout = 0.0f;
+    pid->Dout = 0.0f;
+    pid->ITerm = 0.0f;
+    pid->Output = 0.0f;
+    pid->Last_Output = 0.0f;
+    pid->Last_Dout = 0.0f;
+    pid->Ref = 0.0f;
+    pid->dt = 0.0f;
+    pid->ERRORHandler.ERRORCount = 0;
+    pid->ERRORHandler.ERRORType = PID_ERROR_NONE;
+    pid->reset_pending = 1;
     DWT_GetDeltaT(&pid->DWT_CNT);
 }
 
@@ -168,6 +183,14 @@ float PIDCalculate(PIDInstance *pid, float measure, float ref)
     pid->Measure = measure;
     pid->Ref = ref;
     pid->Err = pid->Ref - pid->Measure;
+    if (pid->reset_pending)
+    {
+        // 停机期间不积分；首拍建立当前误差历史，避免恢复时出现D项冲击。
+        pid->dt = 0.0f;
+        pid->Last_Err = pid->Err;
+        pid->Last_Measure = pid->Measure;
+        pid->reset_pending = 0;
+    }
     
     // // 如果在死区外,则计算PID
     // if (abs(pid->Err) > pid->DeadBand)
@@ -179,9 +202,7 @@ float PIDCalculate(PIDInstance *pid, float measure, float ref)
         pid->Dout = pid->Kd * (pid->Err - pid->Last_Err);
 
 
-        // // 梯形积分
-        // if (pid->Improve & PID_Trapezoid_Intergral)
-        //     f_Trapezoid_Intergral(pid);
+        // 使用矩形积分，不启用梯形积分。
         // // 变速积分
         // if (pid->Improve & PID_ChangingIntegrationRate)
         //     f_Changing_Integration_Rate(pid);

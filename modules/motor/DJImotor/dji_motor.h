@@ -22,6 +22,7 @@
 #include "daemon.h"
 
 #define DJI_MOTOR_CNT 12
+#define GM6020_CURRENT_MAX_CMD 16384 // 手册：±16384 对应转矩电流 ±3 A
 
 /* 滤波系数设置为1的时候即关闭滤波 */
 #define SPEED_SMOOTH_COEF 0.85f      // 最好大于0.85
@@ -35,7 +36,7 @@ typedef struct
     uint16_t ecd;             // 0-8191,刻度总共有8192格
     float angle_single_round; // 单圈角度
     float speed_aps;          // 角速度,单位为:度/秒
-    int16_t real_current;     // 实际电流
+    int16_t real_current;     // 反馈转矩电流原始值，不能直接当作 A
     uint8_t temperature;      // 温度 Celsius
 
     float total_angle;   // 总角度,注意方向

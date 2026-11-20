@@ -1,6 +1,4 @@
-<<<<<<< HEAD
 build/
-=======
 # Prerequisites
 *.d
 
@@ -56,9 +54,17 @@ dkms.conf
 
 # debug information files
 *.dwo
->>>>>>> 2c8c7865d934d2777d032e0dd1842eab47d909cb
 
-# Local beginner tutorial
-/.Doc/哨兵新手逐行调车教程.md
-/.Doc/哨兵电机数据流与整车控制链教程_连贯版.md
-/.Doc/哨兵所有电机目标值与反馈值详解_重写版.md
+# Keep published documentation aligned with yz-0609/rm-sentry.
+# Other local documentation stays on this computer.
+/.Doc/*
+!/.Doc/RM2027_下位机上传协议最小改动方案.md
+!/.Doc/VSCode+Ozone使用方法.md
+!/.Doc/任务间通信机制.md
+!/.Doc/架构介绍与开发指南.md
+
+# Local agent configuration, scratch work and CAN captures
+/.agents/
+/.work_*/
+/tmp/
+/can1_*.csv

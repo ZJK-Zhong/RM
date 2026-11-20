@@ -36,6 +36,16 @@ static uint32_t INS_DWT_Count = 0;
 static float dt = 0, t = 0;
 static float RefTemp = 40; // 恒温设定温度
 
+// Pitch速度反馈低通：仅用于Pitch电机速度环，原始INS.Gyro及姿态解算输入保留。
+static float pitch_gyro_filtered; // rad/s，Orbit可与原始Gyro[1]对照
+static uint8_t pitch_gyro_filter_initialized;
+static const float pitch_gyro_filter_rc_s = 0.007957747f; // 时间常数(s)，1/(2*pi*20Hz)
+
+// Yaw速度反馈低通：独立保存Z轴历史，仅用于Yaw电机速度环。
+static float yaw_gyro_filtered;                          // rad/s，可与原始Gyro[2]对照
+static uint8_t yaw_gyro_filter_initialized;              // 1：已有有效采样历史
+static const float yaw_gyro_filter_rc_s = 0.005305165f;   // 时间常数(s)，1/(2*pi*30Hz)
+
 static void IMU_Param_Correction(IMU_Param_t *param, float gyro[3], float accel[3]);
 
 // IMU fixed to the gimbal, flipped 180 degrees about its forward (roll/X) axis.
@@ -50,6 +60,62 @@ static void IMU_ReadCorrectedData(float gyro[3], float accel[3])
     accel[Y] = -BMI088.Accel[Y];
     accel[Z] = -BMI088.Accel[Z];
     IMU_Param_Correction(&IMU_Param, gyro, accel);
+}
+
+static void PitchGyroFilterUpdate(float sample_rad_s, float dt_s)
+{
+    if (!isfinite(sample_rad_s))
+    {
+        // 不把无效传感器值伪装成零速度，下一次有效采样重新建立历史。
+        pitch_gyro_filtered = sample_rad_s;
+        pitch_gyro_filter_initialized = 0;
+        return;
+    }
+    if (!pitch_gyro_filter_initialized || !isfinite(dt_s) || dt_s > 0.02f)
+    {
+        // 首拍和长时间中断后直接对齐当前速度，避免从零或旧值慢慢追赶。
+        pitch_gyro_filtered = sample_rad_s;
+        pitch_gyro_filter_initialized = 1;
+        return;
+    }
+    if (dt_s <= 0.0f)
+        return;
+
+    float alpha = dt_s / (pitch_gyro_filter_rc_s + dt_s);
+    pitch_gyro_filtered += alpha * (sample_rad_s - pitch_gyro_filtered);
+}
+
+float *INS_GetPitchGyroFeedback(void)
+{
+    return &pitch_gyro_filtered;
+}
+
+static void YawGyroFilterUpdate(float sample_rad_s, float dt_s)
+{
+    if (!isfinite(sample_rad_s))
+    {
+        // 保留异常值，下一次有效采样重新建立历史。
+        yaw_gyro_filtered = sample_rad_s;
+        yaw_gyro_filter_initialized = 0;
+        return;
+    }
+    if (!yaw_gyro_filter_initialized || !isfinite(dt_s) || dt_s > 0.02f)
+    {
+        // 首拍或采样中断超过20ms时，直接对齐当前速度。
+        yaw_gyro_filtered = sample_rad_s;
+        yaw_gyro_filter_initialized = 1;
+        return;
+    }
+    if (dt_s <= 0.0f)
+        return;
+
+    float alpha = dt_s / (yaw_gyro_filter_rc_s + dt_s);
+    yaw_gyro_filtered += alpha * (sample_rad_s - yaw_gyro_filtered);
+}
+
+float *INS_GetYawGyroFeedback(void)
+{
+    return &yaw_gyro_filtered;
 }
 
 static void IMUPWMSet(uint16_t pwm)
@@ -157,6 +223,8 @@ void INS_Task(void)
     if ((count % 1) == 0)
     {
         IMU_ReadCorrectedData(INS.Gyro, INS.Accel);
+        PitchGyroFilterUpdate(INS.Gyro[Y], dt);
+        YawGyroFilterUpdate(INS.Gyro[Z], dt);
 
         // 计算重力加速度矢量和b系的XY两轴的夹角,可用作功能扩展,本demo暂时没用
         // INS.atanxz = -atan2f(INS.Accel[X], INS.Accel[Z]) * 180 / PI;

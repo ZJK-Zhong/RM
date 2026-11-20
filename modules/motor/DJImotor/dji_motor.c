@@ -2,41 +2,49 @@
 #include "general_def.h"
 #include "bsp_dwt.h"
 #include "bsp_log.h"
+#include <math.h>
+
+#define DJI_SENDER_GROUP_COUNT 10
 
 static uint8_t idx = 0; // register idx,是该文件的全局电机索引,在注册时使用
 /* DJI电机的实例,此处仅保存指针,内存的分配将通过电机实例初始化时通过malloc()进行 */
 static DJIMotorInstance *dji_motor_instance[DJI_MOTOR_CNT] = {NULL}; // 会在control任务中遍历该指针数组进行pid计算
 
 /**
- * @brief 由于DJI电机发送以四个一组的形式进行,故对其进行特殊处理,用6个(2can*3group)can_instance专门负责发送
+ * @brief 每路CAN保留3个原发送组，另加2个GM6020电流控制组，共10组。
  *        该变量将在 DJIMotorControl() 中使用,分组在 MotorSenderGrouping()中进行
  *
  * @note  因为只用于发送,所以不需要在bsp_can中注册
  *
  * C610(m2006)/C620(m3508):0x1ff,0x200;
- * GM6020:0x1ff,0x2ff
+ * GM6020电压:0x1ff,0x2ff；电流:0x1fe,0x2fe
  * 反馈(rx_id): GM6020: 0x204+id ; C610/C620: 0x200+id
  * can1: [0]:0x1FF,[1]:0x200,[2]:0x2FF
  * can2: [3]:0x1FF,[4]:0x200,[5]:0x2FF
+ * GM6020电流: can1 [6]:0x1FE,[7]:0x2FE; can2 [8]:0x1FE,[9]:0x2FE
  */
 
 
-//为两个CAN配置三个发送组
+// 不改动原有发送组，避免改变M3508/M2006及电压模式GM6020的控制帧。
 
-static CANInstance sender_assignment[6] = {
+static CANInstance sender_assignment[DJI_SENDER_GROUP_COUNT] = {
     [0] = {.can_handle = &hcan1, .txconf.StdId = 0x1ff, .txconf.IDE = CAN_ID_STD, .txconf.RTR = CAN_RTR_DATA, .txconf.DLC = 0x08, .tx_buff = {0}},
     [1] = {.can_handle = &hcan1, .txconf.StdId = 0x200, .txconf.IDE = CAN_ID_STD, .txconf.RTR = CAN_RTR_DATA, .txconf.DLC = 0x08, .tx_buff = {0}},
     [2] = {.can_handle = &hcan1, .txconf.StdId = 0x2ff, .txconf.IDE = CAN_ID_STD, .txconf.RTR = CAN_RTR_DATA, .txconf.DLC = 0x08, .tx_buff = {0}},
     [3] = {.can_handle = &hcan2, .txconf.StdId = 0x1ff, .txconf.IDE = CAN_ID_STD, .txconf.RTR = CAN_RTR_DATA, .txconf.DLC = 0x08, .tx_buff = {0}},
     [4] = {.can_handle = &hcan2, .txconf.StdId = 0x200, .txconf.IDE = CAN_ID_STD, .txconf.RTR = CAN_RTR_DATA, .txconf.DLC = 0x08, .tx_buff = {0}},
     [5] = {.can_handle = &hcan2, .txconf.StdId = 0x2ff, .txconf.IDE = CAN_ID_STD, .txconf.RTR = CAN_RTR_DATA, .txconf.DLC = 0x08, .tx_buff = {0}},
+    [6] = {.can_handle = &hcan1, .txconf.StdId = 0x1fe, .txconf.IDE = CAN_ID_STD, .txconf.RTR = CAN_RTR_DATA, .txconf.DLC = 0x08, .tx_buff = {0}},
+    [7] = {.can_handle = &hcan1, .txconf.StdId = 0x2fe, .txconf.IDE = CAN_ID_STD, .txconf.RTR = CAN_RTR_DATA, .txconf.DLC = 0x08, .tx_buff = {0}},
+    [8] = {.can_handle = &hcan2, .txconf.StdId = 0x1fe, .txconf.IDE = CAN_ID_STD, .txconf.RTR = CAN_RTR_DATA, .txconf.DLC = 0x08, .tx_buff = {0}},
+    [9] = {.can_handle = &hcan2, .txconf.StdId = 0x2fe, .txconf.IDE = CAN_ID_STD, .txconf.RTR = CAN_RTR_DATA, .txconf.DLC = 0x08, .tx_buff = {0}},
 };
 
 /**
- * @brief 6个用于确认是否有电机注册到sender_assignment中的标志位,防止发送空帧,此变量将在DJIMotorControl()使用
+ * @brief 各组注册标志，未注册的发送组不发帧。
  *        flag的初始化在 MotorSenderGrouping()中进行
  */
-static uint8_t sender_enable_flag[6] = {0};
+static uint8_t sender_enable_flag[DJI_SENDER_GROUP_COUNT] = {0};
 
 /**
  * @brief 根据电调/拨码开关上的ID,根据说明书的默认id分配方式计算发送ID和接收ID,
@@ -99,6 +107,14 @@ static void MotorSenderGrouping(DJIMotorInstance *motor, CAN_Init_Config_s *conf
         {
             motor_send_num = motor_id - 4;
             motor_grouping = config->can_handle == &hcan1 ? 2 : 5;
+        }
+
+        if (motor->motor_settings.gm6020_control_mode == GM6020_CURRENT_CONTROL)
+        {
+            // 电流模式独立帧ID；字节槽位和反馈ID沿用电压模式。
+            motor_grouping = config->can_handle == &hcan1 ? 6 : 8;
+            if (motor_id >= 4)
+                motor_grouping++;
         }
 
         config->rx_id = 0x204 + motor_id + 1;   // 把ID+1,进行分组设置
@@ -263,6 +279,15 @@ void DJIMotorControl()
         motor_setting = &motor->motor_settings;
         motor_controller = &motor->motor_controller;
         measure = &motor->measure;
+        if (motor->stop_flag == MOTOR_STOP)
+        {
+            // 由电机任务统一复位，避免停止后仍累计积分。
+            PIDReset(&motor_controller->angle_PID);
+            PIDReset(&motor_controller->speed_PID);
+            PIDReset(&motor_controller->current_PID);
+            memset(sender_assignment[motor->sender_group].tx_buff + 2 * motor->message_num, 0, sizeof(uint16_t));
+            continue;
+        }
         pid_ref = motor_controller->pid_ref; // 保存设定值,防止motor_controller->pid_ref在计算过程中被修改
         if (motor_setting->motor_reverse_flag == MOTOR_DIRECTION_REVERSE)
             pid_ref *= -1; // 设置反转
@@ -305,14 +330,22 @@ void DJIMotorControl()
         if (motor_setting->feedback_reverse_flag == FEEDBACK_DIRECTION_REVERSE)
             pid_ref *= -1;
 
+        // GM6020电流给定只有±16384；在转int16_t之前限制，避免大值溢出。
+        if (motor->motor_type == GM6020 &&
+            motor_setting->gm6020_control_mode == GM6020_CURRENT_CONTROL)
+        {
+            if (!isfinite(pid_ref))
+                pid_ref = 0.0f;
+            LIMIT_MIN_MAX(pid_ref, -GM6020_CURRENT_MAX_CMD, GM6020_CURRENT_MAX_CMD);
+        }
         // 获取最终输出
         set = (int16_t)pid_ref;
 
         // 分组填入发送数据
         group = motor->sender_group;   //在MotorSenderGrouping函数被设置
         num = motor->message_num;
-        sender_assignment[group].tx_buff[2 * num] = (uint8_t)(set >> 8);         // 低八位
-        sender_assignment[group].tx_buff[2 * num + 1] = (uint8_t)(set & 0x00ff); // 高八位
+        sender_assignment[group].tx_buff[2 * num] = (uint8_t)((uint16_t)set >> 8); // 高八位
+        sender_assignment[group].tx_buff[2 * num + 1] = (uint8_t)((uint16_t)set & 0x00ff); // 低八位
 
         // 若该电机处于停止状态,直接将buff置零
         if (motor->stop_flag == MOTOR_STOP)
@@ -320,7 +353,7 @@ void DJIMotorControl()
     }
 
     // 遍历flag,检查是否要发送这一帧报文
-    for (size_t i = 0; i < 6; ++i)
+    for (size_t i = 0; i < DJI_SENDER_GROUP_COUNT; ++i)
     {
         if (sender_enable_flag[i])
         {

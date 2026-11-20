@@ -84,6 +84,12 @@ typedef struct
  */
 attitude_t *INS_Init(void);
 
+// Pitch专用20Hz低通角速度反馈(rad/s)，每次INS采样更新，原始Gyro数据保留。
+float *INS_GetPitchGyroFeedback(void);
+
+// Yaw专用30Hz低通角速度反馈(rad/s)，每次INS采样更新，原始Gyro数据保留。
+float *INS_GetYawGyroFeedback(void);
+
 /**
  * @brief 此函数放入实时系统中,以1kHz频率运行
  *        p.s. osDelay(1);

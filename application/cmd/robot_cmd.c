@@ -83,6 +83,7 @@ typedef enum
     ROBOT_CONTROL_MODE_FRICTION_ONLY,
     ROBOT_CONTROL_MODE_FIRE,
     ROBOT_CONTROL_MODE_ZERO_FORCE,
+    ROBOT_CONTROL_MODE_GIMBAL_RC, // 仅遥控云台，其他执行机构无力
 } RobotControlMode_e;
 
 
@@ -347,8 +348,9 @@ static RobotControlMode_e robot_mode_choose(uint16_t left_switch, uint16_t right
         {
         case RC_SW_DOWN:
             return ROBOT_CONTROL_MODE_COMPETITION;
-        case RC_SW_MID:
         case RC_SW_UP:
+            return ROBOT_CONTROL_MODE_GIMBAL_RC;
+        case RC_SW_MID:
         default:
             return ROBOT_CONTROL_MODE_SAFE;
         }
@@ -398,7 +400,9 @@ static void reset_control_outputs(void)
 
     gimbal_cmd_send.gimbal_mode = GIMBAL_ZERO_FORCE;
 
-    shoot_cmd_send.shoot_mode = SHOOT_OFF;
+    // 仅遥控云台模式在等待反馈或急停期间，发射电机也保持真正无力。
+    shoot_cmd_send.shoot_mode = current_control_mode == ROBOT_CONTROL_MODE_GIMBAL_RC
+                                   ? SHOOT_ZERO_FORCE : SHOOT_OFF;
     shoot_cmd_send.friction_mode = FRICTION_OFF;
     shoot_cmd_send.load_mode = LOAD_STOP;
 }
@@ -511,12 +515,10 @@ static void vision_off_deal(uint8_t chassis_coordinate_mode)
 
 /***************************************************************************************************/
 /**
- * @brief 根据遥控器摇杆输入更新手动底盘速度和云台目标角度
+ * @brief 根据遥控器左摇杆更新云台目标角度，pitch限幅为正负25度
  */
-static void UpdateRCInput(void)
+static void UpdateRCGimbalInput(void)
 {
-    chassis_cmd_send.vy = 7.0f * (float)rc_data[TEMP].rc.rocker_r_;
-    chassis_cmd_send.vx = -7.0f * (float)rc_data[TEMP].rc.rocker_r1;
     gimbal_cmd_send.yaw += 0.0008f * (float)rc_data[TEMP].rc.rocker_l_;
     gimbal_cmd_send.pitch += 0.002f * (float)rc_data[TEMP].rc.rocker_l1; //1
 
@@ -528,6 +530,16 @@ static void UpdateRCInput(void)
     {
         gimbal_cmd_send.pitch = -25.0f;
     }
+}
+
+/**
+ * @brief 根据遥控器摇杆输入更新手动底盘速度和云台目标角度
+ */
+static void UpdateRCInput(void)
+{
+    chassis_cmd_send.vy = 7.0f * (float)rc_data[TEMP].rc.rocker_r_;
+    chassis_cmd_send.vx = -7.0f * (float)rc_data[TEMP].rc.rocker_r1;
+    UpdateRCGimbalInput();
 }
 
 /**
@@ -658,6 +670,17 @@ static void RunGimbalFireMode(uint8_t vision_cmd_online)
     UpdateVisionShooter();
 }
 
+//-----------仅遥控云台模式：左开关中，右开关上--------------//
+static void RunGimbalRCMode(void)
+{
+    gimbal_cmd_send.gimbal_mode = GIMBAL_GYRO_MODE;
+    chassis_cmd_send.chassis_mode = CHASSIS_ZERO_FORCE;
+    shoot_cmd_send.shoot_mode = SHOOT_ZERO_FORCE;
+    shoot_cmd_send.friction_mode = FRICTION_OFF;
+    shoot_cmd_send.load_mode = LOAD_STOP;
+    UpdateRCGimbalInput();
+}
+
 //-----------移动模式--------------//
 /**
  * @brief 运行遥控器移动模式，底盘跟随云台并关闭发射机构
@@ -743,6 +766,9 @@ static void RunRobotControlMode(RobotControlMode_e mode, uint8_t vision_cmd_onli
         break;
     case ROBOT_CONTROL_MODE_GIMBAL_FIRE:
         RunGimbalFireMode(vision_cmd_online);   //单视觉调试模式
+        break;
+    case ROBOT_CONTROL_MODE_GIMBAL_RC:
+        RunGimbalRCMode();                     //仅遥控yaw/pitch，其余电机无力
         break;
     case ROBOT_CONTROL_MODE_MOVE:
         RunMoveMode();                        //遥控器移动模式

@@ -28,6 +28,25 @@ typedef struct _
 } CANInstance;
 #pragma pack()
 
+/* CAN1错误历史：保存在RAM，正常通信不会清空；复位后重新计数。 */
+typedef struct
+{
+    uint32_t enabled;                         // 1：CAN1错误通知已成功开启
+    uint32_t irq_count;                       // CAN1接收/错误中断入口累计次数，用于确认记录入口在工作
+    uint32_t error_event_count;               // 捕捉到的错误中断事件数，不等同于线上错误帧总数
+    uint32_t bus_off_count;                   // 捕捉到的Bus-Off进入次数；同一关闭状态不重复计数
+    uint32_t last_esr;                        // 最近错误事件的ESR原始值，恢复后保留
+    uint32_t last_tsr;                        // 同一错误事件的TSR原始值
+    uint32_t last_error_ms;                   // 最近错误发生时的系统毫秒计数
+    uint32_t last_lec;                        // 最近捕捉到的有效错误类型1～6，不被0或7覆盖
+    uint32_t lec_count[8];                    // 下标1～6分别累计各类错误事件；0和7不计数
+    uint32_t max_tec_low8;                    // 观察到的发送错误计数低8位最大值，不是完整9位计数
+    uint32_t max_rec;                         // 观察到的接收错误计数最大值
+} CAN1_Debug_s;
+
+extern volatile CAN1_Debug_s can1_debug;
+void CAN1RecordError(void);                   // 仅由CAN1各中断入口在HAL处理之前调用
+
 /* CAN实例初始化结构体,将此结构体指针传入注册函数 */
 typedef struct
 {

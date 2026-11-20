@@ -26,7 +26,7 @@
 
 /* 机器人重要参数定义,注意根据不同机器人进行修改,浮点数需要以.0或f结尾,无符号以u结尾 */
 // 云台参数
-#define YAW_CHASSIS_ALIGN_ECD 1718  // 云台和底盘对齐指向相同方向时的电机编码器值,若对云台有机械改动需要修改
+#define YAW_CHASSIS_ALIGN_ECD 3090  // 云台和底盘对齐指向相同方向时的电机编码器值,若对云台有机械改动需要修改
 #define YAW_ECD_GREATER_THAN_4096 0 // ALIGN_ECD值是否大于4096,是为1,否为0;用于计算云台偏转角度
 #define PITCH_HORIZON_ECD 3412      // 云台处于水平位置时编码器值,若对云台有机械改动需要修改
 #define PITCH_MAX_ANGLE 0           // 云台竖直方向最大角度 (注意反馈如果是陀螺仪，则填写陀螺仪的角度)
@@ -93,8 +93,8 @@ typedef enum
 typedef enum
 {
     GIMBAL_ZERO_FORCE = 0, // 电流零输入
-    GIMBAL_FREE_MODE,      // 云台自由运动模式,即与底盘分离(底盘此时应为NO_FOLLOW)反馈值为电机total_angle;似乎可以改为全部用IMU数据?
-    GIMBAL_GYRO_MODE,      // 云台陀螺仪反馈模式,反馈值为陀螺仪pitch,total_yaw_angle,底盘可以为小陀螺和跟随模式
+    GIMBAL_FREE_MODE,      // 保留原模式值，当前实现与GYRO模式一样使用IMU反馈
+    GIMBAL_GYRO_MODE,      // IMU角度和角速度反馈，位置/速度串级控制
 } gimbal_mode_e;
 
 // 发射模式设置
@@ -102,6 +102,7 @@ typedef enum
 {
     SHOOT_OFF = 0,
     SHOOT_ON,
+    SHOOT_ZERO_FORCE, // 摩擦轮和拨弹轮均零电流，不保持零速制动
 } shoot_mode_e;
 typedef enum
 {

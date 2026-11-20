@@ -278,7 +278,8 @@ ASFLAGS = $(MCU) $(AS_DEFS) $(AS_INCLUDES) $(OPT) -fdata-sections -ffunction-sec
 CFLAGS += $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -fdata-sections -ffunction-sections -fmessage-length=0 -Werror
 
 ifeq ($(DEBUG), 1)
-CFLAGS += -g -gdwarf-2
+# Orbit 1.2.1 needs constant struct-member offsets (DWARF-4).
+CFLAGS += -g -gdwarf-4
 endif
 
 
